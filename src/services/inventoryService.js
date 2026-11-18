@@ -1,10 +1,15 @@
-import { 
-  doc, collection, addDoc, updateDoc, runTransaction, 
-  serverTimestamp, getDoc, setDoc 
+import {
+  doc,
+  collection,
+  updateDoc,
+  runTransaction,
+  serverTimestamp,
+  getDoc,
+  setDoc,
 } from "firebase/firestore";
 import { db } from "../config/firebase";
 
-// 1. Jalankan sekali untuk memastikan 3 data kentang awal tersedia di Firestore
+// 1. Inisialisasi 3 varian kentang awal jika database masih kosong
 export const initInitialProducts = async () => {
   const initialData = [
     { id: "kecil", name: "Kentang Kecil", unit: "0.5 kg", price: 12000, stock: 50 },
@@ -27,7 +32,7 @@ export const initInitialProducts = async () => {
   }
 };
 
-// 2. Fungsi Tambah Stok Masuk (Otomatis menambah stok di products)
+// 2. Tambah Stok Masuk (Otomatis menambah stok di collection products)
 export const addStockIn = async ({ productId, qty, buyPrice = 0, note = "" }) => {
   const productRef = doc(db, "products", productId);
   const stockInCol = collection(db, "stock_ins");
@@ -37,10 +42,11 @@ export const addStockIn = async ({ productId, qty, buyPrice = 0, note = "" }) =>
     if (!productSnap.exists()) throw new Error("Produk tidak ditemukan!");
 
     const productData = productSnap.data();
-    const newStock = productData.stock + Number(qty);
+    const addedQty = Number(qty);
+    if (addedQty <= 0) throw new Error("Jumlah stok masuk harus lebih dari 0!");
 
     transaction.update(productRef, {
-      stock: newStock,
+      stock: productData.stock + addedQty,
       updatedAt: serverTimestamp(),
     });
 
@@ -48,15 +54,15 @@ export const addStockIn = async ({ productId, qty, buyPrice = 0, note = "" }) =>
     transaction.set(newStockInRef, {
       productId,
       productName: productData.name,
-      qty: Number(qty),
-      buyPrice: Number(buyPrice),
-      note,
+      qty: addedQty,
+      buyPrice: Number(buyPrice) || 0,
+      note: note.trim() || "Stok masuk reguler",
       createdAt: serverTimestamp(),
     });
   });
 };
 
-// 3. Fungsi Input Penjualan (Otomatis memotong stok & validasi stok cukup)
+// 3. Input Penjualan (Otomatis memotong stok & validasi sisa stok)
 export const createSaleTransaction = async ({ productId, qty }) => {
   const productRef = doc(db, "products", productId);
   const txCol = collection(db, "transactions");
@@ -66,15 +72,19 @@ export const createSaleTransaction = async ({ productId, qty }) => {
     if (!productSnap.exists()) throw new Error("Produk tidak ditemukan!");
 
     const productData = productSnap.data();
-    if (productData.stock < Number(qty)) {
-      throw new Error(`Stok ${productData.name} tidak cukup! Sisa stok: ${productData.stock}`);
+    const buyQty = Number(qty);
+    if (buyQty <= 0) throw new Error("Jumlah beli harus lebih dari 0!");
+
+    if (productData.stock < buyQty) {
+      throw new Error(
+        `Stok ${productData.name} tidak mencukupi! Sisa stok saat ini: ${productData.stock} kemasan.`
+      );
     }
 
-    const newStock = productData.stock - Number(qty);
-    const totalAmount = productData.price * Number(qty);
+    const totalAmount = productData.price * buyQty;
 
     transaction.update(productRef, {
-      stock: newStock,
+      stock: productData.stock - buyQty,
       updatedAt: serverTimestamp(),
     });
 
@@ -82,7 +92,7 @@ export const createSaleTransaction = async ({ productId, qty }) => {
     transaction.set(newTxRef, {
       productId,
       productName: productData.name,
-      qty: Number(qty),
+      qty: buyQty,
       pricePerUnit: productData.price,
       totalAmount,
       createdAt: serverTimestamp(),
@@ -90,11 +100,15 @@ export const createSaleTransaction = async ({ productId, qty }) => {
   });
 };
 
-// 4. Fungsi Update Harga Dummy saat Demo
+// 4. Update Harga Dummy saat Presentasi Demo ke Klien
 export const updateProductPrice = async (productId, newPrice) => {
+  const priceNumber = Number(newPrice);
+  if (isNaN(priceNumber) || priceNumber < 0) {
+    throw new Error("Harga tidak valid!");
+  }
   const productRef = doc(db, "products", productId);
   await updateDoc(productRef, {
-    price: Number(newPrice),
+    price: priceNumber,
     updatedAt: serverTimestamp(),
   });
 };
